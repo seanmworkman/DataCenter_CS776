@@ -61,15 +61,40 @@ struct vehicle
     // Arrival/Departure times are by the hour based on a 24 hour clock
     int arrivalTime;
     int departureTime;
+    int activeJob;
 };
 
-vector<int> availableSpots;
+// Job
+struct job
+{
+    int name;
+    int generatedDataSize;
+    int duration;
+    bool open;
+};
+
+// Datacenter Manager
+struct datacenterManager
+{
+    int ps;
+    int vehicle;
+};
+
+// vector<int> availableSpots;
 // 500MB
 const int JOB_INPUT = 500;
 // 1Gbps normalized to Mb
 const int WIRED_BANDWIDTH = 1000;
 // 54Mbps 
 const int WIRELESS_BANDWIDTH = 54;
+// 1 hour (simulated)
+const int ONE_HOUR = 1000000;
+// 1 second (simulated)
+const int ONE_SECOND = 2778;
+
+const string AVAILABLE = "AVAILABLE";
+
+const string BUSY = "BUSY";
 
 // helper function to convert GB to MB
 double getGBtoMB(double gb) {
@@ -87,14 +112,24 @@ int bytesToBits(int bytes) {
 }
 
 // Print function for vehicles 
-void printVehicles(vector<vehicle> vehicles) {
+void printVehicles(vector<vehicle> vehicles, vector<job> jobs) {
     // for (int i = 0; i < vehicles.size(); i++) {
     for (int i = 0; i < 2560; i++) {
-        cout << vehicles[i].name << endl;
+        cout << "Vehicle: " << vehicles[i].name << endl;
         cout << "   - Parking Spot: " << vehicles[i].ps << endl;
         cout << "   - Status: " << vehicles[i].status << endl;
         cout << "   - Arrival Time: " << vehicles[i].arrivalTime << endl;
         cout << "   - Departure Time: " << vehicles[i].departureTime << endl;
+        cout << "   - Active Job: " << vehicles[i].activeJob << endl;
+        if (vehicles[i].activeJob != -1) {
+            cout << "Job: " << jobs[vehicles[i].activeJob].name << endl;
+            cout << "   - Data Size: " << jobs[vehicles[i].activeJob].generatedDataSize << endl;
+            cout << "   - Duration: " << jobs[vehicles[i].activeJob].duration << endl;
+            cout << "   - Open: " << jobs[vehicles[i].activeJob].open << endl;
+        }
+        else {
+            cout << "Job: NONE" << endl;
+        }
     }
 }
 
@@ -105,7 +140,6 @@ int getGeneratedDataSizeInMB() {
     uniform_real_distribution<double> unif(lower, upper);
     default_random_engine re;
     double dataSize = unif(re); 
-    cout << dataSize << endl; 
     int dsInMB = getGBtoMB(dataSize);
     return (int) dsInMB;
 }
@@ -114,6 +148,27 @@ int getGeneratedDataSizeInMB() {
 int getJobDuration() {
     int duration = rand() % (24 - 3 + 1);
     return duration;
+}
+
+// Takes the data size and the transfer type (wired or wireless) 
+//      and gives the time it will take to transfer
+int getTransferTime(int dataSize, bool wired) {
+    int transferTime = 0;
+    if (wired) {
+        transferTime = ((double) dataSize / (double) WIRED_BANDWIDTH) * (double) ONE_SECOND;
+    }
+    else {
+        transferTime = ((double) dataSize / (double) WIRELESS_BANDWIDTH) * (double) ONE_SECOND;
+    }
+    return transferTime;
+}
+
+// helper function for simulating transfer latencies
+void transferDelay(int transferTime) {
+    struct timespec timeout;
+    timeout.tv_sec = 0;
+    timeout.tv_nsec = transferTime * 1000;
+    nanosleep(&timeout, NULL);
 }
 
 // Creates a dc 
@@ -202,24 +257,55 @@ vector<vehicle> createVehicles() {
         vehicle v;
         v.name = i;
         v.ps = -1;
-        v.status = "available";
+        v.status = AVAILABLE;
         v.arrivalTime = -1;
         v.departureTime = -1;
+        v.activeJob = -1;
         vehicles.push_back(v);
     }
 
     return vehicles;
 }
 
-void setUpSimulation() {
 
+// Create enough jobs to avoid having to create more later
+vector<job> createJobs() {
+    vector<job> jobs;
+    for (int i = 0; i < 23040; i++) {
+        job curJob;
+        curJob.name = i;
+        curJob.generatedDataSize = getGeneratedDataSizeInMB();
+        curJob.duration = getJobDuration();
+
+        jobs.push_back(curJob);
+    }
+    return jobs;
+}
+
+// Assign a job to the specified vehicle
+void assignJobToVehicle(vector<job> &jobs, vehicle &v) {
+    // If there are no jobs remaining create more
+    if (jobs.empty()) {
+        jobs = createJobs();
+    }
+
+    for (int i = 0; i < jobs.size(); i++) {
+        // Find an open job, assign it to the vehicle and set the vehicle's status to busy
+        if (jobs[i].open) {
+            v.activeJob = jobs[i].name;
+            v.status = BUSY;
+            jobs[i].open = false;
+            // TODO: add delay for JOB_INPUT download
+            break;
+        }
+    }
 }
 
 // At the beginning of the simulation the parking lot is full 
 // Add a vehicle to every parking spot randomly from the vector of vehicles 
 // Each set of 320 vehicles should have an arrival time that is offset by an hour for each group
 //      This reperesents each 320 vehicle group arriving for their 8 hour shifts at different times
-void setupSimulation(vector<parkingSpot> &parkingSpots, vector<vehicle> &vehicles) {
+void setupSimulation(vector<parkingSpot> &parkingSpots, vector<vehicle> &vehicles, vector<job> &jobs) {
     vector<int> numbers;
     // Create a vector of numbers 0-7679
     for (int i = 0; i < parkingSpots.size(); i++) {
@@ -239,12 +325,91 @@ void setupSimulation(vector<parkingSpot> &parkingSpots, vector<vehicle> &vehicle
         parkingSpots[numbers[i]].vehicle = i; 
         vehicles[i].ps = numbers[i];
         vehicles[i].arrivalTime = arrival;
+        // Assign jobs to half the vehicles 
+        if (i % 2 == 0) {
+            assignJobToVehicle(jobs, vehicles[i]);
+        }
+    }
+}
+
+int getDepartureTime(int arrivalTime) {
+    int dt = arrivalTime + 8;
+    if (dt >= 24) {
+        dt -= 24;
+    }
+    return dt;
+}
+
+
+void migrateVM(vector<parkingSpot> &parkingSpots, vector<vehicle> &vehicles, int vIndex, vector<job> &jobs) {
+    // Try to find an available vehicle in the same cluster to migrate to
+    // Best case the one that has an arrival time closest to the current time
+    for (int i = 0; i < parkingSpots.size(); i++) {
+        // TODO: Implement time closest to current time (migration strategy 2??????????????????????????????????????????????????????)
+        // Check for available vehicle in same cluster
+        if (parkingSpots[i].name != vehicles[vIndex].ps &&
+            parkingSpots[i].ap == parkingSpots[vehicles[vIndex].ps].ap &&
+            parkingSpots[i].vehicle != -1 &&
+            vehicles[parkingSpots[i].vehicle].status == AVAILABLE) {
+                // Migrate job to new vehicle
+                int dataSize = 0;
+                if (vehicles[vIndex].activeJob != -1) {
+                    dataSize = jobs[vehicles[vIndex].activeJob].generatedDataSize;
+                }
+                // UPLOAD Parking Spot to Access Point (wireless)
+                transferDelay(getTransferTime(dataSize, false));
+                // DOWNLOAD Access Point to Parking Spot (wireless)
+                transferDelay(getTransferTime(dataSize, false));
+                vehicles[parkingSpots[i].vehicle].status = BUSY;
+                vehicles[parkingSpots[i].vehicle].ps = parkingSpots[i].name;
+                vehicles[parkingSpots[i].vehicle].activeJob = vehicles[vIndex].activeJob;
+
+                // Clear out vehicle leaving
+                vehicles[vIndex].activeJob = -1;
+                vehicles[vIndex].departureTime = getDepartureTime(vehicles[vIndex].arrivalTime);
+                vehicles[vIndex].arrivalTime = -1;
+                vehicles[vIndex].status = AVAILABLE;
+
+                break;
+        }
+        // TODO: Cover situation where no options inside cluster OR group OR region
     }
 }
 
 
 
+// Transfer a completed job to the vehicle's respective datacenter manager (co-located with the DC)
+void transferCompletedJobToDC(vector<parkingSpot> &parkingSpots, vector<vehicle> &vehicles, int vIndex, vector<job> &jobs, vector<job> &completedJobs) {
+    // Get the parking spot that the vehicle is in
+    parkingSpot ps = parkingSpots[vehicles[vIndex].ps];
+    int dataSize = 0;
+    if (vehicles[vIndex].activeJob != -1) {
+        dataSize = jobs[vehicles[vIndex].activeJob].generatedDataSize;
+    }
+    
+    // Parking Spot to Access Point (wireless)
+    transferDelay(getTransferTime(dataSize, false));
 
+    // Access Point to Group Controller (wired)
+    transferDelay(getTransferTime(dataSize, true));
+
+    // Group Controller to Region Controller (wired)
+    transferDelay(getTransferTime(dataSize, true));
+
+    // Region Controller to Datacenter Manager (wired)
+    transferDelay(getTransferTime(dataSize, true));
+
+    // The job is completed and transfered to the datacenter manager
+    // Remove the job from the jobs vector and add it to the completedJobs vector
+    // Make sure the vehicle has a job (shouldn't not have a job, just to be safe)
+    if (vehicles[vIndex].activeJob != -1) {
+        completedJobs.push_back(jobs[vehicles[vIndex].activeJob]);
+        jobs.erase(jobs.begin() + vehicles[vIndex].activeJob);
+    }
+    // The vehicle is now available
+    vehicles[vIndex].status = AVAILABLE;
+    vehicles[vIndex].activeJob = -1;
+}
 
 
 
@@ -266,13 +431,27 @@ int main()
     vector<accessPoint> aps = createAPs(gcs);
     vector<parkingSpot> parkingSpots = createPSs(aps);
     vector<vehicle> vehicles = createVehicles();
+    vector<job> jobs = createJobs();
+
+    vector<job> completedJobs;
 
     // Setup the simulation by filling the parking lot with vehicles randomly
-    setupSimulation(parkingSpots, vehicles);
-
+    setupSimulation(parkingSpots, vehicles, jobs);
+    // printVehicles(vehicles, jobs);
 
     auto start = high_resolution_clock::now();
     
+
+
+
+    migrateVM(parkingSpots, vehicles, 2558, jobs);
+    // transferCompletedJobToDC(parkingSpots, vehicles, 2558, jobs, completedJobs);
+    printVehicles(vehicles, jobs);
+    // for (int i = 0; i < completedJobs.size(); i++) {
+    //     cout << completedJobs[i].name << endl;
+    //     cout << completedJobs[i].generatedDataSize << endl;
+    //     cout << completedJobs[i].duration << endl;
+    // }
     auto stop = high_resolution_clock::now(); 
     auto duration = duration_cast<microseconds>(stop - start); 
     cout << duration.count() << endl; 
