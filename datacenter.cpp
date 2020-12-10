@@ -1307,7 +1307,7 @@ int main()
     int successfulMigrations = 0;
     int failedMigrations = 0;
     string migrationStrategy = "1";
-    cout << "Please Select a migration strategy (type 0 OR 1 OR 2 OR 3):" << endl;
+    cout << "Select a migration strategy (type 0 OR 1 OR 2 OR 3):" << endl;
     cin >> migrationStrategy;
 
     auto start = high_resolution_clock::now();

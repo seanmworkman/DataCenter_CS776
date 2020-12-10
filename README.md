@@ -1,39 +1,29 @@
 # DataCenter_CS776
 
+## Description
+This program simulates a datacenter that uses rotating shifts of vehicles parked in parking spots that walk back up to a datacenter controller. It handles the shifts switching and migrating all active VMs of departing cars to VMs of arriving cars, along with any active jobs. The simulation runs for until a total of ~1500 jobs have been completed. The job durations and data sizes are generated using C++ library uniform distributions. 
+
+## How to execute the program
+- Compile the program from the datacenter.cpp file
+- Run the executable created
+- When prompted to select a migration strategy, type `0` `1` `2` OR `3` to run the respective strategies then hit enter
+- A running clock and tally of completed jobs will be desplayed as the program runs
+- At the end you will be presented with the total number of jobs completed and the total time it took in microseconds
+
+## Technical Aspects
 To make the simulation run faster the specified times are broken down to a ratio of 3,600:1
 - 1 hour (3,600,000 ms; 3,600,000,000 microseconds) = 1 second (1,000 ms; 1,000,000 microseconds)
 - 1 second (1,000 ms; 1,000,000 microseconds) = 2.7778 ms (~2778 microseconds)
 
 
-Strategy 1 - Ample lead up time to ensure everything is migrated:
-- At the 30 minute (simulation: 0.5 seconds) mark everyone in that shift begins to dump there progress to another available car or to another car's hard drive if none are available.
-- As new cars come in those left over jobs are picked up and completed 
-
-Strategy 2 - 
-- Every 10 minutes (simulation: 0.1 seconds) every car in the shift that is about to leave is checked to see how much time the migration will take
-- If one is already within 1 minute (simulation: 0.01 seconds) of not being able to get everything transferred the transfer will begin 
-- The rest will schedule themselves based on who needs the most time (i.e. how much data they have)
+Different VM migration strategies are defined in the Report as well as comments above the individual functions
+- migrateVM_S0: Strategy0
+- migrateVM_S1: Strategy1
+- migrateVM_S2: Strategy2
+- migrateVM_S3: Strategy3
 
 
-
-TODO:
-- When migrating to a different VM add check for closest arrival time to current time
-    - Possibly another strategy for VM migration????????
-- When migrating to a different VM add checks for if there is no option in the same cluster 
-    - Check other clusters in the GC
-    - Check other GCs
-    - Check other RCs
-    - Check entire DC
-
-VM Migration Strategy 3:
-- Store all available cars in a vector and select from there to migrate to
-
-
-Don't assign jobs to vehicles if there is under a certain percentage of available vehicles 
-- Start at 50%
-
-
-
+Defined structs
 // Datacenter Controller
 struct datacenterController
 {
@@ -107,10 +97,3 @@ struct datacenterManager
     int ps;
     int vehicle;
 };
-
-
-
-
-
-Problems:
-- Jobs stop finishing at a certain point
